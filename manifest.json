@@ -1,0 +1,30 @@
+{
+	"dependencies": [],
+	"description": "Adds map size, map opacity and a Diablo-style centered overlay map to the UI options",
+	"extra": {
+		"godot": {
+			"authors": [
+				"blur6"
+			],
+			"compatible_game_version": [],
+			"compatible_mod_loader_version": [
+				"7.0.0"
+			],
+			"config_schema": {
+
+			},
+			"description_rich": "",
+			"image": null,
+			"incompatibilities": [],
+			"load_before": [],
+			"optional_dependencies": [],
+			"tags": [
+				"UI"
+			]
+		}
+	},
+	"name": "map_options",
+	"namespace": "blur6",
+	"version_number": "1.0.0",
+	"website_url": ""
+}
