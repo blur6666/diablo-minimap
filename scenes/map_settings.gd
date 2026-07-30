@@ -28,6 +28,14 @@ static var size_scale := DEFAULT_SIZE
 static var opacity := DEFAULT_OPACITY
 static var diablo := DEFAULT_DIABLO
 
+## Largest scale that still fits the current display, published by the map
+## controller from its viewport clamp. Not persisted - it is a property of the
+## screen, not of the profile. The options menu ends the size slider here so the
+## whole of its travel does something: on a 1920x1080 display a 500px base map
+## tops out at 0.9 * 1080 = 972px, i.e. 1.94x, and every slider position above
+## that would otherwise be inert.
+static var max_size_scale := 2.5
+
 static var _loaded := false
 
 

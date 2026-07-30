@@ -193,6 +193,11 @@ func apply() -> void:
 	var s := base_size * k
 	# Clamp uniformly so the map never swallows the screen.
 	var limit := minf(vp.x, vp.y) * MAX_VIEWPORT_FRACTION
+	# Publish the largest scale this display can actually show, so the slider can
+	# end there instead of spending its top travel pinned against the clamp.
+	var base_longest := maxf(base_size.x, base_size.y)
+	if base_longest > 0.0:
+		MapSettings.max_size_scale = limit / base_longest
 	var longest := maxf(s.x, s.y)
 	if longest > limit:
 		k *= limit / longest

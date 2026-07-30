@@ -65,6 +65,7 @@ func _ready() -> void:
 func show_options():
 	super.show_options()
 	if is_instance_valid(map_size_slider):
+		_sync_size_slider_range()
 		map_size_slider.set_value_no_signal(MapSettings.size_scale)
 	if is_instance_valid(map_opacity_slider):
 		map_opacity_slider.set_value_no_signal(MapSettings.opacity)
@@ -95,6 +96,7 @@ func _build_map_options() -> void:
 		MAP_SIZE_MIN, MAP_SIZE_MAX, 0.05, MapSettings.size_scale
 	)
 	map_size_slider = size_row.get_node("HBoxContainer/MapSizeSlider")
+	_sync_size_slider_range()
 	map_size_slider.value_changed.connect(_on_map_size_slider_value_changed)
 	map_size_slider.drag_started.connect(_on_map_slider_drag_started)
 	map_size_slider.drag_ended.connect(_on_map_size_slider_drag_ended)
@@ -141,6 +143,19 @@ func _build_map_options() -> void:
 		tab.move_child(row, after)
 
 	_add_hover_highlight([map_size_slider, map_opacity_slider])
+
+
+## A 500px base map cannot exceed 90% of the shorter viewport axis, which is
+## 972px (1.94x) on 1920x1080 — so on that display every slider position above
+## 1.94 produced an identical map and the top of the travel felt broken. The
+## reachable maximum is a property of the screen, so it is applied here instead
+## of being baked into MAP_SIZE_MAX, and re-checked on each show_options() in
+## case the resolution changed. Must run before set_value_no_signal, or Range
+## clamps the incoming value against the previous maximum.
+func _sync_size_slider_range() -> void:
+	if not is_instance_valid(map_size_slider):
+		return
+	map_size_slider.max_value = clampf(MapSettings.max_size_scale, MAP_SIZE_MIN + 0.05, MAP_SIZE_MAX)
 
 
 func _make_slider_row(row_name: String, label_key: String, slider_name: String,
