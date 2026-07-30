@@ -30,6 +30,8 @@ const MAX_VIEWPORT_FRACTION := 0.9
 const IN_ROOM_ZOOM := Vector2.ONE * 0.03
 ## Vanilla's per-frame zoom lerp weight.
 const ZOOM_LERP := 0.05
+## The viewport height the vanilla 500px map was designed against.
+const DESIGN_HEIGHT := 1080.0
 
 var minimap: Control
 var minimap_id: int = 0
@@ -37,7 +39,15 @@ var minimap_id: int = 0
 var base_size := Vector2(500, 500)
 var base_zoom := Vector2(0.01, 0.01)
 
-## Scale actually used after the viewport clamp.
+## Viewport height over the design height. The game renders its UI at native
+## pixel size, so at 4K every Control - vanilla ones included - covers half the
+## screen share it does at 1080p. Folding this into the map's size keeps a given
+## slider position at a constant fraction of the screen instead of a constant
+## pixel count. Exactly 1.0 at 1080p, so nothing changes there.
+var res_scale := 1.0
+## Post-clamp slider scale, i.e. the user-facing part of the magnification.
+var user_scale := 1.0
+## Total rect/zoom factor against base_size: user_scale * res_scale.
 var effective_scale := 1.0
 ## Anchor pair (horizontal, vertical) for the resting rect in the current mode.
 var rest_anchor := Vector2(1.0, 0.0)
@@ -128,8 +138,11 @@ func _physics_process(delta: float) -> void:
 ## every size, without disturbing vanilla's camera-lead behaviour itself.
 ## Runs after minimap.gd's own _physics_process (process_physics_priority), so
 ## this is the last write of the frame.
+## Divides by user_scale rather than effective_scale on purpose: the resolution
+## component magnifies the rect and the offset together, so it stays proportional
+## and must pass through. Only the slider's magnification needs cancelling.
 func _recentre(camera: Camera2D) -> void:
-	if effective_scale <= 0.0 or is_equal_approx(effective_scale, 1.0):
+	if user_scale <= 0.0 or is_equal_approx(user_scale, 1.0):
 		return
 	if not is_instance_valid(G.player) or not is_instance_valid(G.player.map_icon):
 		return
@@ -141,7 +154,7 @@ func _recentre(camera: Camera2D) -> void:
 	# compound every frame and slide the map onto the player.
 	var player_pos: Vector2 = G.player.map_icon.global_position
 	var base_pos: Vector2 = G.main.camera.global_position
-	camera.global_position = player_pos + (base_pos - player_pos) / effective_scale
+	camera.global_position = player_pos + (base_pos - player_pos) / user_scale
 
 
 ## Picks up a freshly spawned Minimap (a new one is created per level load).
@@ -195,20 +208,24 @@ func apply() -> void:
 	if vp.x <= 0.0 or vp.y <= 0.0:
 		return
 
+	res_scale = maxf(vp.y / DESIGN_HEIGHT, 0.01)
 	var k := maxf(MapSettings.size_scale, 0.05)
-	var s := base_size * k
+	var s := base_size * k * res_scale
 	# Clamp uniformly so the map never swallows the screen.
 	var limit := minf(vp.x, vp.y) * MAX_VIEWPORT_FRACTION
 	# Publish the largest scale this display can actually show, so the slider can
-	# end there instead of spending its top travel pinned against the clamp.
-	var base_longest := maxf(base_size.x, base_size.y)
+	# end there instead of spending its top travel pinned against the clamp. Both
+	# sides of this scale with the viewport now, so the reachable maximum comes out
+	# the same on every display rather than depending on the monitor.
+	var base_longest := maxf(base_size.x, base_size.y) * res_scale
 	if base_longest > 0.0:
 		MapSettings.max_size_scale = limit / base_longest
 	var longest := maxf(s.x, s.y)
 	if longest > limit:
 		k *= limit / longest
-		s = base_size * k
-	effective_scale = k
+		s = base_size * k * res_scale
+	user_scale = k
+	effective_scale = k * res_scale
 
 	var pos := Vector2(vp.x - s.x, 0.0)
 	if MapSettings.diablo:
