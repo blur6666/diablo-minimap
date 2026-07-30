@@ -62,6 +62,16 @@ var _peek_hold_id := 0
 func _ready() -> void:
 	super._ready()
 	_build_map_options()
+	# The Fullscreen and Resolution controls live in this same menu, so the
+	# viewport - and with it the largest map that fits - can change while the
+	# size slider is on screen, after show_options() has already synced it.
+	get_tree().root.size_changed.connect(_on_viewport_resized)
+
+
+## The map controller recomputes the reachable maximum from this same signal;
+## deferring means this runs after it regardless of connection order.
+func _on_viewport_resized() -> void:
+	_sync_size_slider_range.call_deferred()
 
 
 func show_options():
