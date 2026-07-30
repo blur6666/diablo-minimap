@@ -31,9 +31,15 @@ const OUTLINE_COLOR := Color(0.82, 0.88, 1.0, 0.95)
 ## Drawn above the floor fill, below the icons.
 const OUTLINE_Z := 1
 
+## Last value actually pushed to the lines. map_display_changed is shared with the
+## opacity and size settings, which emit once per frame while a slider is dragged,
+## and walking the whole level tree for a setting that has not moved is pure cost.
+var _applied_outline := false
+
 
 func _ready() -> void:
 	MapSettings.ensure_loaded()
+	_applied_outline = MapSettings.outline
 	SignalBus.level_ready.connect(_rescan)
 	# Secret paths and shops can put geometry on the map after the level is
 	# already running, so re-sweep as rooms are found rather than only at load.
@@ -50,6 +56,9 @@ func _rescan() -> void:
 	var root: Node = G.level_generator if is_instance_valid(G.level_generator) else null
 	if root == null:
 		return
+	# _ensure_outline sets visible from the live setting on every line it touches,
+	# new or existing, so a rescan leaves the tree at the current value.
+	_applied_outline = MapSettings.outline
 	var made := 0
 	for poly in _find_map_polys(root):
 		if _ensure_outline(poly):
@@ -107,9 +116,12 @@ func _ensure_outline(poly: Polygon2D) -> bool:
 
 
 func _apply_visibility() -> void:
+	if MapSettings.outline == _applied_outline:
+		return
 	var root: Node = G.level_generator if is_instance_valid(G.level_generator) else null
 	if root == null:
 		return
+	_applied_outline = MapSettings.outline
 	for poly in _find_map_polys(root):
 		var line := poly.get_node_or_null(OUTLINE_NAME) as Line2D
 		if line:

@@ -303,6 +303,8 @@ func _on_reset_map_options_pressed() -> void:
 		map_opacity_slider.set_value_no_signal(MapSettings.opacity)
 	if is_instance_valid(diablo_map_button):
 		diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
+	if is_instance_valid(outline_button):
+		outline_button.set_pressed_no_signal(MapSettings.outline)
 	# Same peek as any other map change, so the result is visible immediately.
 	_peek_on_value_changed()
 
