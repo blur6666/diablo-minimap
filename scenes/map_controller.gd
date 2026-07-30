@@ -127,6 +127,19 @@ func _bind() -> bool:
 
 	minimap = current
 	minimap_id = current.get_instance_id()
+	# The scene's root is a TextureRect carrying the 400x400 square_mask, and
+	# TextureRect's default EXPAND_KEEP_SIZE turns the texture's size into a hard
+	# minimum that custom_minimum_size cannot go under. Every map below 400px was
+	# therefore clamped to 400: docked, the size simply stopped responding below
+	# 0.8x; centred, the anchor kept tracking the requested size while the width
+	# stayed pinned, so the panel slid sideways instead of shrinking. The mask is
+	# drawn with STRETCH_SCALE regardless, so dropping the texture out of the
+	# minimum-size calculation changes nothing about how it renders.
+	var texture_rect := current as TextureRect
+	if texture_rect:
+		texture_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	else:
+		ModLoaderLog.warning("Minimap root is not a TextureRect - sizes below 400px may clamp", LOG_NAME)
 	base_size = current.default_size
 	if base_size.x <= 0.0 or base_size.y <= 0.0:
 		base_size = Vector2(500, 500)
@@ -169,8 +182,8 @@ func apply() -> void:
 	# The vars shrink() converges to, so the M-key map always returns here.
 	minimap.default_size = s
 	minimap.default_alpha = alpha
-	# The scene pins custom_minimum_size to 500x500, which would otherwise stop
-	# the rect from ever going below the vanilla size.
+	# Keeps the control's minimum size in step with the requested rect. The
+	# texture-derived floor that used to override this is disabled in _bind().
 	minimap.custom_minimum_size = s
 
 	if minimap.expanded:
