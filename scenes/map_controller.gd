@@ -53,6 +53,12 @@ func _ready() -> void:
 	# Runs after the minimap's own _physics_process, so our zoom write is the
 	# last one of the frame and vanilla's lerp never fights it.
 	process_physics_priority = 100
+	# The size slider lives in the pause menu, and apply() only resizes the rect
+	# — the matching zoom is driven from _physics_process. Without this the tree
+	# is paused while the slider moves, the zoom never follows, and the preview
+	# shows a bigger window onto the world instead of a bigger map. The minimap's
+	# own _physics_process stays paused, so there is still nothing to fight.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	MapSettings.ensure_loaded()
 	SignalBus.map_display_changed.connect(apply)
 	get_tree().root.size_changed.connect(apply)

@@ -23,9 +23,38 @@ const MAP_SIZE_MAX := 2.5
 const MAP_OPACITY_MIN := 0.1
 const MAP_OPACITY_MAX := 1.0
 
+## Peek: while a map control is being used from the *pause* menu, the pause
+## veil (CanvasLayer/Blur's lod + CanvasLayer/Darken's own colour) is faded out
+## so the map behind it is sharp and undimmed and the change can actually be
+## judged. Darken's `color` is faded rather than its `modulate`, because the
+## black backdrop panel behind the menu text is a child of Darken and inherits
+## modulate — fading colour leaves that panel, and the menu's readability,
+## alone.
+const PEEK_FADE_IN := 0.12
+const PEEK_FADE_OUT := 0.25
+## Keyboard/gamepad slider nudges emit value_changed with no drag_started /
+## drag_ended pair, so those hold the peek open for a moment instead. Kept
+## short: it only has to bridge the gap between successive key repeats.
+const PEEK_HOLD := 0.5
+## pause_menu.tscn's "enter" animation ends here; only used if the live instance
+## shader parameter cannot be read back.
+const PEEK_BLUR_LOD := 4.5
+
 var map_size_slider: HSlider
 var map_opacity_slider: HSlider
 var diablo_map_button: CheckButton
+
+var _peek_blur: ColorRect
+var _peek_darken: ColorRect
+var _peek_lod := PEEK_BLUR_LOD
+var _peek_darken_alpha := 1.0
+var _peek_captured := false
+var _peek_active := false
+var _peek_tween: Tween
+var _peek_dragging := false
+## Bumped whenever the peek state changes, so a pending hold timer that has been
+## superseded knows to do nothing.
+var _peek_hold_id := 0
 
 
 func _ready() -> void:
@@ -41,6 +70,14 @@ func show_options():
 		map_opacity_slider.set_value_no_signal(MapSettings.opacity)
 	if is_instance_valid(diablo_map_button):
 		diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
+
+
+func hide_options():
+	super.hide_options()
+	# Leaving the tab mid-peek (Back, or the pause menu closing) must not strand
+	# the veil faded out.
+	_peek_dragging = false
+	_peek_end()
 
 
 func _build_map_options() -> void:
@@ -59,6 +96,7 @@ func _build_map_options() -> void:
 	)
 	map_size_slider = size_row.get_node("HBoxContainer/MapSizeSlider")
 	map_size_slider.value_changed.connect(_on_map_size_slider_value_changed)
+	map_size_slider.drag_started.connect(_on_map_slider_drag_started)
 	map_size_slider.drag_ended.connect(_on_map_size_slider_drag_ended)
 
 	var opacity_row := _make_slider_row(
@@ -67,6 +105,7 @@ func _build_map_options() -> void:
 	)
 	map_opacity_slider = opacity_row.get_node("HBoxContainer/MapOpacitySlider")
 	map_opacity_slider.value_changed.connect(_on_map_opacity_slider_value_changed)
+	map_opacity_slider.drag_started.connect(_on_map_slider_drag_started)
 	map_opacity_slider.drag_ended.connect(_on_map_opacity_slider_drag_ended)
 
 	diablo_map_button = CheckButton.new()
@@ -161,21 +200,134 @@ func _add_hover_highlight(sliders: Array) -> void:
 # drag_ended re-saves once at the end of the drag.
 func _on_map_size_slider_value_changed(value: float) -> void:
 	MapSettings.set_size_scale(value)
+	_peek_on_value_changed()
 
 
 func _on_map_size_slider_drag_ended(value_changed: bool) -> void:
 	if value_changed:
 		MapSettings.resave_size_scale()
+	_on_map_slider_drag_ended()
 
 
 func _on_map_opacity_slider_value_changed(value: float) -> void:
 	MapSettings.set_opacity(value)
+	_peek_on_value_changed()
 
 
 func _on_map_opacity_slider_drag_ended(value_changed: bool) -> void:
 	if value_changed:
 		MapSettings.resave_opacity()
+	_on_map_slider_drag_ended()
 
 
 func _on_diablo_map_toggled(toggled_on: bool) -> void:
 	MapSettings.set_diablo(toggled_on)
+	# Same reason as the sliders: the toggle relocates and re-tints the map, and
+	# there is nothing to see through a blurred veil.
+	_peek_on_value_changed()
+
+
+func _on_map_slider_drag_started() -> void:
+	_peek_dragging = true
+	_peek_begin()
+
+
+func _on_map_slider_drag_ended() -> void:
+	_peek_dragging = false
+	_peek_end()
+
+
+## Keyboard / gamepad changes never emit the drag pair, so they open the peek
+## themselves and let it close on a timer.
+func _peek_on_value_changed() -> void:
+	if _peek_dragging:
+		return
+	_peek_begin()
+	_peek_end(PEEK_HOLD)
+
+
+## The options menu is instanced in the main menu as well, where there is no
+## pause veil (and no map) — this only resolves inside the pause menu instance.
+## Resolved lazily because pause_menu.gd assigns G.pause_menu in its own _ready,
+## which runs after this node's.
+func _peek_bind() -> bool:
+	if is_instance_valid(_peek_blur) and is_instance_valid(_peek_darken):
+		return true
+	var pause_menu: Node = G.pause_menu
+	if not is_instance_valid(pause_menu) or not pause_menu.is_ancestor_of(self):
+		return false
+	_peek_blur = pause_menu.get_node_or_null("CanvasLayer/Blur") as ColorRect
+	_peek_darken = pause_menu.get_node_or_null("CanvasLayer/Darken") as ColorRect
+	if _peek_blur == null or _peek_darken == null:
+		ModLoaderLog.warning("Pause veil nodes not found - map preview peek disabled", LOG_NAME)
+		return false
+	var anim := pause_menu.get_node_or_null("AnimationPlayer") as AnimationPlayer
+	if anim:
+		anim.animation_started.connect(_on_pause_animation_started)
+	return true
+
+
+func _peek_begin() -> void:
+	if not _peek_bind():
+		return
+	_peek_hold_id += 1
+	if not _peek_active:
+		# Capture only when the veil is at rest, so a peek started while the
+		# previous one is still fading back does not record a mid-fade value.
+		if not _peek_captured:
+			var lod: Variant = _peek_blur.get_instance_shader_parameter("lod")
+			_peek_lod = float(lod) if lod != null else PEEK_BLUR_LOD
+			_peek_darken_alpha = _peek_darken.color.a
+			_peek_captured = true
+		_peek_active = true
+	_peek_tween_veil(0.0, 0.0, PEEK_FADE_IN)
+
+
+func _peek_end(hold := 0.0) -> void:
+	if not _peek_active:
+		return
+	if hold > 0.0:
+		_peek_hold_id += 1
+		var id := _peek_hold_id
+		# process_always so it still ticks with the tree paused, ignore_time_scale
+		# so the resume slow-motion ramp does not stretch it.
+		var timer := get_tree().create_timer(hold, true, false, true)
+		timer.timeout.connect(func() -> void:
+			if id == _peek_hold_id:
+				_peek_end()
+		)
+		return
+	_peek_active = false
+	_peek_tween_veil(_peek_lod, _peek_darken_alpha, PEEK_FADE_OUT)
+
+
+func _peek_tween_veil(lod: float, darken_alpha: float, duration: float) -> void:
+	if not is_instance_valid(_peek_blur) or not is_instance_valid(_peek_darken):
+		return
+	if _peek_tween:
+		_peek_tween.kill()
+	var from: Variant = _peek_blur.get_instance_shader_parameter("lod")
+	# Ignore the pause time scale the same way every other pause-menu tween does.
+	_peek_tween = create_tween().set_parallel().set_ignore_time_scale(true)
+	_peek_tween.tween_method(_set_peek_lod, float(from) if from != null else lod, lod, duration)
+	_peek_tween.tween_property(_peek_darken, "color:a", darken_alpha, duration)
+
+
+func _set_peek_lod(value: float) -> void:
+	if is_instance_valid(_peek_blur):
+		_peek_blur.set_instance_shader_parameter("lod", value)
+
+
+## pause() and resume() drive the blur lod from the pause menu's own
+## AnimationPlayer. Once that is playing it owns the property, so drop the peek
+## rather than fight it — but Darken's `color` is not on any track, so that one
+## still has to be put back by hand.
+func _on_pause_animation_started(_anim_name: StringName) -> void:
+	if _peek_tween:
+		_peek_tween.kill()
+		_peek_tween = null
+	_peek_hold_id += 1
+	_peek_active = false
+	_peek_dragging = false
+	if _peek_captured and is_instance_valid(_peek_darken):
+		_peek_darken.color.a = _peek_darken_alpha
