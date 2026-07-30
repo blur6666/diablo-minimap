@@ -176,7 +176,13 @@ func _bind() -> bool:
 	zoom_state = base_zoom
 	was_expanded = current.expanded
 	zoom_lock = 0.0
-	ModLoaderLog.info("Bound minimap (base size %s, base zoom %s)" % [base_size, base_zoom], LOG_NAME)
+	# Viewport included because it is the input that decides how large the map can
+	# get, and it is not what you would guess from the screen resolution: with
+	# canvas_items stretch it stays at the 1920x1080 base on any display, so a
+	# reading of the physical resolution here means content scaling is not applying
+	# and every Control - vanilla ones included - is rendering at half relative size.
+	ModLoaderLog.info("Bound minimap (base size %s, base zoom %s, viewport %s)" % [
+		base_size, base_zoom, current.get_viewport_rect().size], LOG_NAME)
 	apply()
 	return minimap.is_inside_tree()
 
