@@ -20,6 +20,8 @@ extends RefCounted
 ## Tooltip strings must not contain braces: menu_tooltip.gd calls
 ## .format(G.format_dict) on the translated result.
 
+const LOG_NAME := "blur6-diablo_minimap:Strings"
+
 const KEY_MAP_SIZE := "BLUR6_DIABLO_MINIMAP_SIZE"
 const KEY_MAP_OPACITY := "BLUR6_DIABLO_MINIMAP_OPACITY"
 const KEY_DIABLO := "BLUR6_DIABLO_MINIMAP_DIABLO"
@@ -136,16 +138,35 @@ const STRINGS := {
 	},
 }
 
+## Drop-in overrides, so a language can be fixed or added without editing this
+## script or rebuilding the mod. One flat {key: text} JSON per locale, named
+## after it:
+##
+##     user://blur6-diablo_minimap/translations/pl.json     <- survives mod updates
+##     <mod>/translations/pl.json                           <- shipped contributions
+##
+## e.g. cs.json: {"BLUR6_DIABLO_MINIMAP_OPACITY": "Krytí mapy"}
+const USER_TRANSLATION_DIR := "user://blur6-diablo_minimap/translations"
+const MOD_TRANSLATION_DIR := "res://mods-unpacked/blur6-diablo_minimap/translations"
+
 static var _registered := false
 
 
 ## Call from mod_main._init(), i.e. long before any menu is built. One
 ## Translation per locale carrying every key, rather than one per key/locale
 ## pair, so TranslationServer ends up with 13 objects instead of 91.
+##
+## Overlays go in first on purpose. TranslationServer resolves to the earliest
+## registration for a given locale and key, so anything supplied from outside
+## beats the built-in below, while keys it does not mention still fall through
+## to ours. That makes a partial correction file legal: fix one string, inherit
+## the rest.
 static func register() -> void:
 	if _registered:
 		return
 	_registered = true
+	_load_overlay_dir(USER_TRANSLATION_DIR)
+	_load_overlay_dir(MOD_TRANSLATION_DIR)
 	var by_locale := {}
 	for key in STRINGS:
 		for locale in STRINGS[key]:
@@ -156,3 +177,49 @@ static func register() -> void:
 			by_locale[locale].add_message(key, STRINGS[key][locale])
 	for locale in by_locale:
 		TranslationServer.add_translation(by_locale[locale])
+
+
+## Public entry point for other mods: register a locale for this mod's keys.
+## Call it before this mod's _init() to override a built-in translation, or at
+## any time to add a language that is not shipped here - the latter is the
+## common case and works regardless of ordering, since there is nothing to lose
+## to. Keys are the KEY_* constants on this script.
+static func add_locale(locale: String, messages: Dictionary) -> void:
+	if locale.is_empty() or messages.is_empty():
+		return
+	var t := Translation.new()
+	t.locale = locale
+	for key in messages:
+		t.add_message(StringName(key), str(messages[key]))
+	TranslationServer.add_translation(t)
+
+
+## Every file is registered before anything is logged. Logging inside the loop
+## meant one failing call - ModLoaderLog is unavailable in some contexts - threw
+## partway through and silently dropped every remaining language, which is a bad
+## way to lose a translation: the first file works, so nothing looks broken.
+static func _load_overlay_dir(dir_path: String) -> void:
+	if not DirAccess.dir_exists_absolute(dir_path):
+		return
+	var loaded := []
+	var skipped := []
+	for file_name in DirAccess.get_files_at(dir_path):
+		if file_name.get_extension().to_lower() != "json":
+			continue
+		var locale := file_name.get_basename()
+		var text := FileAccess.get_file_as_string(dir_path.path_join(file_name))
+		if text.is_empty():
+			skipped.append(file_name)
+			continue
+		var parsed: Variant = JSON.parse_string(text)
+		if typeof(parsed) != TYPE_DICTIONARY:
+			skipped.append(file_name)
+			continue
+		add_locale(locale, parsed)
+		loaded.append("%s(%d)" % [locale, (parsed as Dictionary).size()])
+	if not loaded.is_empty():
+		ModLoaderLog.info("Translation overrides from %s: %s" % [
+			dir_path, ", ".join(loaded)], LOG_NAME)
+	if not skipped.is_empty():
+		ModLoaderLog.warning("Ignored malformed translation overrides: %s" % [
+			", ".join(skipped)], LOG_NAME)
