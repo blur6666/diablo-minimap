@@ -43,6 +43,7 @@ const PEEK_BLUR_LOD := 4.5
 var map_size_slider: HSlider
 var map_opacity_slider: HSlider
 var diablo_map_button: CheckButton
+var reset_map_button: Button
 
 var _peek_blur: ColorRect
 var _peek_darken: ColorRect
@@ -133,11 +134,21 @@ func _build_map_options() -> void:
 	diablo_map_button.add_child(tooltip)
 	diablo_map_button.add_child(BUTTON_SFX.instantiate())
 
+	# Restores all three map settings at once. The size slider in particular
+	# persists across sessions, so a run can start pinned against the viewport
+	# clamp with no way to tell that from a broken slider - this gives a known
+	# baseline to compare against.
+	reset_map_button = Button.new()
+	reset_map_button.name = "ResetMapOptions"
+	reset_map_button.text = "Reset Map Options"
+	reset_map_button.pressed.connect(_on_reset_map_options_pressed)
+	reset_map_button.add_child(BUTTON_SFX.instantiate())
+
 	# Group them with the existing minimap toggle rather than dumping them at
 	# the bottom of the tab.
 	var after := %PlayerMinimapVisible.get_index() if %PlayerMinimapVisible.get_parent() == tab \
 		else tab.get_child_count() - 1
-	for row: Control in [size_row, opacity_row, diablo_map_button]:
+	for row: Control in [size_row, opacity_row, diablo_map_button, reset_map_button]:
 		tab.add_child(row)
 		after += 1
 		tab.move_child(row, after)
@@ -233,6 +244,23 @@ func _on_map_opacity_slider_drag_ended(value_changed: bool) -> void:
 	if value_changed:
 		MapSettings.resave_opacity()
 	_on_map_slider_drag_ended()
+
+
+## Writes the defaults through MapSettings (which persists and emits), then pulls
+## the controls back into line. _sync_size_slider_range() runs first: the stored
+## scale can sit above the reachable maximum, and Range would clamp the incoming
+## value against a stale max_value.
+func _on_reset_map_options_pressed() -> void:
+	MapSettings.reset_to_defaults()
+	_sync_size_slider_range()
+	if is_instance_valid(map_size_slider):
+		map_size_slider.set_value_no_signal(MapSettings.size_scale)
+	if is_instance_valid(map_opacity_slider):
+		map_opacity_slider.set_value_no_signal(MapSettings.opacity)
+	if is_instance_valid(diablo_map_button):
+		diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
+	# Same peek as any other map change, so the result is visible immediately.
+	_peek_on_value_changed()
 
 
 func _on_diablo_map_toggled(toggled_on: bool) -> void:

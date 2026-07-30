@@ -79,6 +79,22 @@ static func set_diablo(value: bool) -> void:
 	SignalBus.map_display_changed.emit()
 
 
+## Restores all three settings to their vanilla-equivalent defaults and persists
+## them, so a session can be started from a known state rather than from whatever
+## the last one left behind.
+##
+## Not named reset(): keeping a distance from the built-in Object/Script method
+## names this script is reachable through, the same trap that reload() was.
+static func reset_to_defaults() -> void:
+	size_scale = DEFAULT_SIZE
+	opacity = DEFAULT_OPACITY
+	diablo = DEFAULT_DIABLO
+	SaveManager.save_setting(KEY_SIZE, size_scale)
+	SaveManager.save_setting(KEY_OPACITY, opacity)
+	SaveManager.save_setting(KEY_DIABLO, diablo)
+	SignalBus.map_display_changed.emit()
+
+
 ## Re-save without re-emitting, for the sliders' drag_ended pass.
 static func resave_size_scale() -> void:
 	SaveManager.save_setting(KEY_SIZE, size_scale)
