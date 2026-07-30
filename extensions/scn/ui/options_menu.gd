@@ -8,13 +8,15 @@ extends "res://scn/ui/options_menu.gd"
 ## so they look and sound native. Node references are kept on the instance:
 ## nodes added at runtime are not registered as scene-unique, so % won't find them.
 ##
-## Labels are literal English rather than translation keys: the mod ships no
-## translations, and tr() passes unknown strings through unchanged, so a key
-## would just render as "label_map_size" in every locale.
+## Labels are translation keys, registered at runtime from map_strings.gd in all
+## 13 languages the game ships. Control auto-translation resolves them on Labels
+## and Buttons, and menu_tooltip.gd runs its text through tr(), so the tooltips
+## take keys as well - all of it re-resolving live when the language changes.
 
 const LOG_NAME := "blur6-diablo_minimap:OptionsMenu"
 
 const MapSettings := preload("res://mods-unpacked/blur6-diablo_minimap/scenes/map_settings.gd")
+const MapStrings := preload("res://mods-unpacked/blur6-diablo_minimap/scenes/map_strings.gd")
 const BUTTON_SFX := preload("res://scn/ui/button_sfx.tscn")
 const MENU_TOOLTIP := preload("res://scn/ui/menu_tooltip.tscn")
 
@@ -114,7 +116,7 @@ func _build_map_options() -> void:
 	MapSettings.ensure_loaded()
 
 	var size_row := _make_slider_row(
-		"MapSizeMargin", "Map Size", "MapSizeSlider",
+		"MapSizeMargin", MapStrings.KEY_MAP_SIZE, "MapSizeSlider",
 		MAP_SIZE_MIN, MAP_SIZE_MAX, 0.05, MapSettings.size_scale
 	)
 	map_size_slider = size_row.get_node("HBoxContainer/MapSizeSlider")
@@ -124,7 +126,7 @@ func _build_map_options() -> void:
 	map_size_slider.drag_ended.connect(_on_map_size_slider_drag_ended)
 
 	var opacity_row := _make_slider_row(
-		"MapOpacityMargin", "Map Opacity", "MapOpacitySlider",
+		"MapOpacityMargin", MapStrings.KEY_MAP_OPACITY, "MapOpacitySlider",
 		MAP_OPACITY_MIN, MAP_OPACITY_MAX, 0.01, MapSettings.opacity
 	)
 	map_opacity_slider = opacity_row.get_node("HBoxContainer/MapOpacitySlider")
@@ -133,14 +135,12 @@ func _build_map_options() -> void:
 	map_opacity_slider.drag_ended.connect(_on_map_opacity_slider_drag_ended)
 
 	diablo_map_button = _make_check_row(
-		"DiabloMap", "Diablo Style Map", MapSettings.diablo,
-		_on_diablo_map_toggled,
-		"Moves the map to the centre of the screen as a translucent overlay and pins it on the player, Diablo-style. Opacity still applies."
+		"DiabloMap", MapStrings.KEY_DIABLO, MapSettings.diablo,
+		_on_diablo_map_toggled, MapStrings.KEY_DIABLO_TIP
 	)
 	outline_button = _make_check_row(
-		"MapOutline", "Highlight Map Walls", MapSettings.outline,
-		_on_outline_toggled,
-		"Traces every room and corridor on the map with a bright edge, so the layout reads as walls instead of flat shapes. Map only - the world is untouched."
+		"MapOutline", MapStrings.KEY_OUTLINE, MapSettings.outline,
+		_on_outline_toggled, MapStrings.KEY_OUTLINE_TIP
 	)
 
 	# Restores all three map settings at once. The size slider in particular
@@ -149,7 +149,7 @@ func _build_map_options() -> void:
 	# baseline to compare against.
 	reset_map_button = Button.new()
 	reset_map_button.name = "ResetMapOptions"
-	reset_map_button.text = "Reset Map Options"
+	reset_map_button.text = MapStrings.KEY_RESET
 	reset_map_button.pressed.connect(_on_reset_map_options_pressed)
 	reset_map_button.add_child(BUTTON_SFX.instantiate())
 

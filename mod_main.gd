@@ -3,6 +3,7 @@ extends Node
 
 const MOD_DIR := "blur6-diablo_minimap"
 const LOG_NAME := "blur6-diablo_minimap:Main"
+const MapStrings := preload("scenes/map_strings.gd")
 
 var mod_dir_path := ""
 var extensions_dir_path := ""
@@ -13,6 +14,10 @@ var map_outline: Node = null
 
 func _init() -> void:
 	ModLoaderLog.info("Init", LOG_NAME)
+	# Before anything can build a menu. Registering from a Dictionary means no
+	# CSV or .translation import step, and Control auto-translation re-resolves
+	# the keys live when the player changes language.
+	MapStrings.register()
 	mod_dir_path = ModLoaderMod.get_unpacked_dir().path_join(MOD_DIR)
 	install_script_extensions()
 
