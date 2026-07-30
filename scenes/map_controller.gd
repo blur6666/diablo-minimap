@@ -43,6 +43,9 @@ var effective_scale := 1.0
 var rest_anchor := Vector2(1.0, 0.0)
 
 var was_expanded := false
+## Last values reported by the size log, so it only speaks on a real change.
+var _logged_size := Vector2.ZERO
+var _logged_vp := Vector2.ZERO
 ## While > 0 the vanilla shrink tween owns %Camera2D.zoom; we only track it.
 var zoom_lock := 0.0
 var zoom_state := Vector2(0.01, 0.01)
@@ -199,10 +202,21 @@ func apply() -> void:
 	if base_longest > 0.0:
 		MapSettings.max_size_scale = limit / base_longest
 	var longest := maxf(s.x, s.y)
-	if longest > limit:
+	var was_clamped := longest > limit
+	if was_clamped:
 		k *= limit / longest
 		s = base_size * k
 	effective_scale = k
+
+	# Every input to the size calculation, logged only when the result actually
+	# changes so dragging a slider does not flood the log.
+	if not s.is_equal_approx(_logged_size) or not vp.is_equal_approx(_logged_vp):
+		_logged_size = s
+		_logged_vp = vp
+		ModLoaderLog.info("size: vp=%s base=%s requested=%.2fx limit=%.0fpx%s -> %.0fpx (%.3fx), reachable max %.2fx" % [
+			vp, base_size, MapSettings.size_scale, limit,
+			" CLAMPED" if was_clamped else "", s.x, effective_scale, MapSettings.max_size_scale,
+		], LOG_NAME)
 
 	var pos := Vector2(vp.x - s.x, 0.0)
 	if MapSettings.diablo:
