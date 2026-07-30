@@ -113,6 +113,35 @@ func _physics_process(delta: float) -> void:
 	var target: Vector2 = (IN_ROOM_ZOOM if G.current_room else base_zoom) * effective_scale
 	zoom_state = zoom_state.lerp(target, ZOOM_LERP)
 	camera.zoom = zoom_state
+	_recentre(camera)
+
+
+## Vanilla parks the map camera on the *game* camera, which leads the player by
+## an aim-dependent world-space offset. On screen that offset is
+## (player - camera) * zoom, so magnifying the zoom by k magnifies the offset by
+## k as well: the player marker walks sideways across the map as the size slider
+## moves, and at the top of the range it leaves the map altogether. Since the
+## rect and the zoom scale together the framing is otherwise self-similar, which
+## is what made that drift the only visible effect of the slider.
+##
+## Dividing the offset back out keeps the marker exactly where it sits at 1x, at
+## every size, without disturbing vanilla's camera-lead behaviour itself.
+## Runs after minimap.gd's own _physics_process (process_physics_priority), so
+## this is the last write of the frame.
+func _recentre(camera: Camera2D) -> void:
+	if effective_scale <= 0.0 or is_equal_approx(effective_scale, 1.0):
+		return
+	if not is_instance_valid(G.player) or not is_instance_valid(G.player.map_icon):
+		return
+	if not is_instance_valid(G.main) or not is_instance_valid(G.main.camera):
+		return
+	# Derived from the game camera rather than the map camera's current value:
+	# while the tree is paused this still runs (PROCESS_MODE_ALWAYS) but vanilla's
+	# _physics_process does not, so reading our own previous output back would
+	# compound every frame and slide the map onto the player.
+	var player_pos: Vector2 = G.player.map_icon.global_position
+	var base_pos: Vector2 = G.main.camera.global_position
+	camera.global_position = player_pos + (base_pos - player_pos) / effective_scale
 
 
 ## Picks up a freshly spawned Minimap (a new one is created per level load).
