@@ -49,11 +49,10 @@ var minimap_id: int = 0
 var base_size := Vector2(500, 500)
 var base_zoom := Vector2(0.01, 0.01)
 
-## Viewport height over the design height. The game renders its UI at native
-## pixel size, so at 4K every Control - vanilla ones included - covers half the
-## screen share it does at 1080p. Folding this into the map's size keeps a given
-## slider position at a constant fraction of the screen instead of a constant
-## pixel count. Exactly 1.0 at 1080p, so nothing changes there.
+## Correction for the case where the UI is drawn at native pixel size instead of
+## being scaled to the design resolution - see _resolution_scale(). 1.0 whenever
+## content scaling is doing its job, which includes a normal shipped build, so
+## this is inert unless it is actually needed.
 var res_scale := 1.0
 ## Post-clamp slider scale, i.e. the user-facing part of the magnification.
 var user_scale := 1.0
@@ -218,13 +217,14 @@ func _bind() -> bool:
 	was_expanded = current.expanded
 	zoom_lock = 0.0
 	follow_valid = false
-	# Viewport included because it is the input that decides how large the map can
-	# get, and it is not what you would guess from the screen resolution: with
-	# canvas_items stretch it stays at the 1920x1080 base on any display, so a
-	# reading of the physical resolution here means content scaling is not applying
-	# and every Control - vanilla ones included - is rendering at half relative size.
-	ModLoaderLog.info("Bound minimap (base size %s, base zoom %s, viewport %s)" % [
-		base_size, base_zoom, current.get_viewport_rect().size], LOG_NAME)
+	# Viewport and window are both logged because their relationship is what
+	# decides whether the map needs a resolution correction: equal means content
+	# scaling is not applying and every Control, vanilla ones included, is drawn
+	# at native pixel size. Different means scaling is working and the map is
+	# already proportional. Neither is guessable from the screen resolution.
+	ModLoaderLog.info("Bound minimap (base size %s, base zoom %s, viewport %s, window %s)" % [
+		base_size, base_zoom, current.get_viewport_rect().size,
+		DisplayServer.window_get_size()], LOG_NAME)
 	apply()
 	return minimap.is_inside_tree()
 
@@ -237,7 +237,7 @@ func apply() -> void:
 	if vp.x <= 0.0 or vp.y <= 0.0:
 		return
 
-	res_scale = maxf(vp.y / DESIGN_HEIGHT, 0.01)
+	res_scale = _resolution_scale(vp)
 	var k := maxf(MapSettings.size_scale, 0.05)
 	var s := base_size * k * res_scale
 	# Clamp uniformly so the map never swallows the screen.
@@ -291,6 +291,32 @@ func apply() -> void:
 	var sub_viewport := _sub_viewport()
 	if sub_viewport:
 		sub_viewport.size = Vector2i(roundi(s.x), roundi(s.y))
+
+
+## How much to enlarge the map so it holds its share of the screen.
+##
+## Only corrects the case where the UI is genuinely rendering at native pixel
+## size - i.e. content scaling is not applying, every Control including the
+## vanilla HUD is drawn small, and a 500px map covers a quarter of the screen
+## area it was designed for.
+##
+## Distinguishing that from a merely tall window matters, because with
+## aspect="expand" a 4:3 or 16:10 window legitimately reports a viewport taller
+## than 1080 while scaling works perfectly - keying off height alone would
+## enlarge the map by a third for no reason. The tell is that when scaling is
+## applying, the logical viewport and the window's pixel size differ; when it is
+## not, they are the same rectangle.
+##
+## In a shipped build the engine normally handles this and the result is 1.0, so
+## this whole path is inert there.
+func _resolution_scale(vp: Vector2) -> float:
+	var window_px := Vector2(DisplayServer.window_get_size())
+	if window_px.x <= 0.0 or window_px.y <= 0.0:
+		return 1.0
+	if not vp.is_equal_approx(window_px):
+		# Content scaling is doing its job; the map is already proportional.
+		return 1.0
+	return maxf(vp.y / DESIGN_HEIGHT, 0.01)
 
 
 func _tween_anchors(to: Vector2) -> void:
