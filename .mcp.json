@@ -7,7 +7,7 @@
                 "@coding-solo/godot-mcp"
             ],
             "env": {
-                "GODOT_PATH": "../pathogenic-files/Godot_v4.7-stable_mono_win64/Godot_v4.7-stable_mono_win64.exe"
+                "GODOT_PATH": "${GODOT_PATH}"
             }
         },
         "context7": {

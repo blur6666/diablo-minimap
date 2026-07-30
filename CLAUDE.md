@@ -49,13 +49,27 @@ failures. The engine lives inside the support directory, so paths are relative t
 ../pathogenic-files/Godot_v4.7-stable_mono_win64/Godot_v4.7-stable_mono_win64_console.exe   # use this one for captured output
 ```
 
-The `godot` MCP server in `.mcp.json` points `GODOT_PATH` at the first of these. Its env has
-historically not taken effect (falling back to `C:\Program Files\Godot\Godot.exe` and failing),
-so prefer invoking the exe directly.
+The `godot` MCP server was long believed to ignore `GODOT_PATH`, because it kept falling back to
+`C:\Program Files\Godot\Godot.exe`. That diagnosis was wrong. `@coding-solo/godot-mcp` *does*
+read `process.env.GODOT_PATH`, but it validates the value first (`existsSync`, then
+`<path> --version`) and **silently** drops to a hardcoded search list when validation fails —
+`C:\Program Files\Godot\Godot.exe` is simply the first entry of that list. The old value pointed
+into `Downloads`, which no longer exists, so it failed validation every time. The fallback is
+indistinguishable from "the env was ignored", which is what made this misleading.
 
-`.mcp.json` is committed and must stay free of secrets: the Context7 key is referenced as
-`${CONTEXT7_API_KEY}` and its real value lives in `.claude/settings.local.json`, which is
-gitignored.
+Two consequences worth remembering:
+
+- **Use an absolute path.** Validation runs `existsSync`/`execFile` against the *server process's*
+  working directory, and Node's `normalize()` does not absolutize. A relative path happens to
+  work when that cwd is this repo, but nothing guarantees it.
+- **The server caches.** It resolves the path at startup and memoizes results in `validatedPaths`,
+  so editing the config mid-session changes nothing until Claude Code restarts.
+
+`.mcp.json` is committed, so it must stay free of both secrets and machine-specific paths. Both
+values are referenced there (`${CONTEXT7_API_KEY}`, `${GODOT_PATH}`) and defined for real in
+`.claude/settings.local.json`, which is gitignored.
+
+Invoking the exe directly is still the more reliable route for anything scripted.
 
 ### GDExtension DLLs (the decompile's main trap)
 
