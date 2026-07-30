@@ -18,15 +18,20 @@ extends RefCounted
 const KEY_SIZE := "map_size_scale"
 const KEY_OPACITY := "map_opacity"
 const KEY_DIABLO := "diablo_map"
+const KEY_OUTLINE := "map_outline"
 
 const DEFAULT_SIZE := 1.0
 ## Vanilla minimap modulate.a.
 const DEFAULT_OPACITY := 0.75
 const DEFAULT_DIABLO := false
+## On by default: the outline is what makes the layout read as walls rather than
+## as flat shapes, and it is the mod's reason for existing.
+const DEFAULT_OUTLINE := true
 
 static var size_scale := DEFAULT_SIZE
 static var opacity := DEFAULT_OPACITY
 static var diablo := DEFAULT_DIABLO
+static var outline := DEFAULT_OUTLINE
 
 ## Largest scale that still fits the current display, published by the map
 ## controller from its viewport clamp. Not persisted - it is a property of the
@@ -59,6 +64,7 @@ static func reload_from_save() -> void:
 	size_scale = SaveManager.read_setting(KEY_SIZE, DEFAULT_SIZE)
 	opacity = SaveManager.read_setting(KEY_OPACITY, DEFAULT_OPACITY)
 	diablo = SaveManager.read_setting(KEY_DIABLO, DEFAULT_DIABLO)
+	outline = SaveManager.read_setting(KEY_OUTLINE, DEFAULT_OUTLINE)
 
 
 static func set_size_scale(value: float) -> void:
@@ -79,6 +85,12 @@ static func set_diablo(value: bool) -> void:
 	SignalBus.map_display_changed.emit()
 
 
+static func set_outline(value: bool) -> void:
+	outline = value
+	SaveManager.save_setting(KEY_OUTLINE, value)
+	SignalBus.map_display_changed.emit()
+
+
 ## Restores all three settings to their vanilla-equivalent defaults and persists
 ## them, so a session can be started from a known state rather than from whatever
 ## the last one left behind.
@@ -89,9 +101,11 @@ static func reset_to_defaults() -> void:
 	size_scale = DEFAULT_SIZE
 	opacity = DEFAULT_OPACITY
 	diablo = DEFAULT_DIABLO
+	outline = DEFAULT_OUTLINE
 	SaveManager.save_setting(KEY_SIZE, size_scale)
 	SaveManager.save_setting(KEY_OPACITY, opacity)
 	SaveManager.save_setting(KEY_DIABLO, diablo)
+	SaveManager.save_setting(KEY_OUTLINE, outline)
 	SignalBus.map_display_changed.emit()
 
 

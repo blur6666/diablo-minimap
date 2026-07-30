@@ -8,6 +8,7 @@ var mod_dir_path := ""
 var extensions_dir_path := ""
 
 var map_controller: Node = null
+var map_outline: Node = null
 
 
 func _init() -> void:
@@ -51,3 +52,9 @@ func _add_map_controller() -> void:
 	map_controller.name = "MapController"
 	add_child(map_controller)
 	ModLoaderLog.info("Map controller added", LOG_NAME)
+
+	var MapOutlineScript = load(mod_dir_path.path_join("scenes/map_outline.gd"))
+	map_outline = MapOutlineScript.new()
+	map_outline.name = "MapOutline"
+	add_child(map_outline)
+	ModLoaderLog.info("Map outline added", LOG_NAME)

@@ -50,6 +50,7 @@ const PEEK_BLUR_LOD := 4.5
 var map_size_slider: HSlider
 var map_opacity_slider: HSlider
 var diablo_map_button: CheckButton
+var outline_button: CheckButton
 var reset_map_button: Button
 
 var _peek_blur: ColorRect
@@ -90,6 +91,8 @@ func show_options():
 		map_opacity_slider.set_value_no_signal(MapSettings.opacity)
 	if is_instance_valid(diablo_map_button):
 		diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
+	if is_instance_valid(outline_button):
+		outline_button.set_pressed_no_signal(MapSettings.outline)
 
 
 func hide_options():
@@ -129,28 +132,16 @@ func _build_map_options() -> void:
 	map_opacity_slider.drag_started.connect(_on_map_slider_drag_started)
 	map_opacity_slider.drag_ended.connect(_on_map_opacity_slider_drag_ended)
 
-	diablo_map_button = CheckButton.new()
-	diablo_map_button.name = "DiabloMap"
-	diablo_map_button.text = "Diablo Style Map"
-	diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
-	diablo_map_button.toggled.connect(_on_diablo_map_toggled)
-	var tooltip := MENU_TOOLTIP.instantiate()
-	tooltip.text = "Moves the map to the centre of the screen as a translucent overlay, Diablo-style. Size and opacity still apply."
-	# Vanilla's tooltip layout: anchors preset 6 (centre-right), all offsets 0.
-	# set_anchor(..., false) instead of the property setters, which would rewrite
-	# the offsets to keep the node where it currently is.
-	tooltip.set_anchor(SIDE_LEFT, 1.0, false)
-	tooltip.set_anchor(SIDE_RIGHT, 1.0, false)
-	tooltip.set_anchor(SIDE_TOP, 0.5, false)
-	tooltip.set_anchor(SIDE_BOTTOM, 0.5, false)
-	tooltip.offset_left = 0.0
-	tooltip.offset_right = 0.0
-	tooltip.offset_top = 0.0
-	tooltip.offset_bottom = 0.0
-	tooltip.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	tooltip.grow_vertical = Control.GROW_DIRECTION_BOTH
-	diablo_map_button.add_child(tooltip)
-	diablo_map_button.add_child(BUTTON_SFX.instantiate())
+	diablo_map_button = _make_check_row(
+		"DiabloMap", "Diablo Style Map", MapSettings.diablo,
+		_on_diablo_map_toggled,
+		"Moves the map to the centre of the screen as a translucent overlay and pins it on the player, Diablo-style. Opacity still applies."
+	)
+	outline_button = _make_check_row(
+		"MapOutline", "Highlight Map Walls", MapSettings.outline,
+		_on_outline_toggled,
+		"Traces every room and corridor on the map with a bright edge, so the layout reads as walls instead of flat shapes. Map only - the world is untouched."
+	)
 
 	# Restores all three map settings at once. The size slider in particular
 	# persists across sessions, so a run can start pinned against the viewport
@@ -166,7 +157,7 @@ func _build_map_options() -> void:
 	# the bottom of the tab.
 	var after := %PlayerMinimapVisible.get_index() if %PlayerMinimapVisible.get_parent() == tab \
 		else tab.get_child_count() - 1
-	var rows: Array[Control] = [opacity_row, diablo_map_button, reset_map_button]
+	var rows: Array[Control] = [opacity_row, diablo_map_button, outline_button, reset_map_button]
 	if SHOW_SIZE_SLIDER:
 		rows.push_front(size_row)
 	else:
@@ -192,6 +183,34 @@ func _sync_size_slider_range() -> void:
 	if not is_instance_valid(map_size_slider):
 		return
 	map_size_slider.max_value = clampf(MapSettings.max_size_scale, MAP_SIZE_MIN + 0.05, MAP_SIZE_MAX)
+
+
+## Both toggles are built identically, so the vanilla tooltip layout lives here
+## once. set_anchor(..., false) rather than the property setters: the setters
+## rewrite the offsets to keep the node where it currently sits, which undoes
+## the preset.
+func _make_check_row(row_name: String, label: String, pressed: bool,
+		on_toggled: Callable, tooltip_text: String) -> CheckButton:
+	var button := CheckButton.new()
+	button.name = row_name
+	button.text = label
+	button.set_pressed_no_signal(pressed)
+	button.toggled.connect(on_toggled)
+	var tooltip := MENU_TOOLTIP.instantiate()
+	tooltip.text = tooltip_text
+	tooltip.set_anchor(SIDE_LEFT, 1.0, false)
+	tooltip.set_anchor(SIDE_RIGHT, 1.0, false)
+	tooltip.set_anchor(SIDE_TOP, 0.5, false)
+	tooltip.set_anchor(SIDE_BOTTOM, 0.5, false)
+	tooltip.offset_left = 0.0
+	tooltip.offset_right = 0.0
+	tooltip.offset_top = 0.0
+	tooltip.offset_bottom = 0.0
+	tooltip.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	tooltip.grow_vertical = Control.GROW_DIRECTION_BOTH
+	button.add_child(tooltip)
+	button.add_child(BUTTON_SFX.instantiate())
+	return button
 
 
 func _make_slider_row(row_name: String, label_key: String, slider_name: String,
@@ -285,6 +304,11 @@ func _on_reset_map_options_pressed() -> void:
 	if is_instance_valid(diablo_map_button):
 		diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
 	# Same peek as any other map change, so the result is visible immediately.
+	_peek_on_value_changed()
+
+
+func _on_outline_toggled(toggled_on: bool) -> void:
+	MapSettings.set_outline(toggled_on)
 	_peek_on_value_changed()
 
 
