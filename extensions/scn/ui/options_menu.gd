@@ -50,6 +50,7 @@ var _peek_darken: ColorRect
 var _peek_lod := PEEK_BLUR_LOD
 var _peek_darken_alpha := 1.0
 var _peek_captured := false
+var _peek_bind_logged := false
 var _peek_active := false
 var _peek_tween: Tween
 var _peek_dragging := false
@@ -298,6 +299,11 @@ func _peek_bind() -> bool:
 		return true
 	var pause_menu: Node = G.pause_menu
 	if not is_instance_valid(pause_menu) or not pause_menu.is_ancestor_of(self):
+		# Expected for the main-menu instance, which has no veil. Logged once so a
+		# missing peek can be told apart from a peek that bound and did nothing.
+		if not _peek_bind_logged:
+			_peek_bind_logged = true
+			ModLoaderLog.info("peek: no pause menu ancestor, nothing to fade here", LOG_NAME)
 		return false
 	_peek_blur = pause_menu.get_node_or_null("CanvasLayer/Blur") as ColorRect
 	_peek_darken = pause_menu.get_node_or_null("CanvasLayer/Darken") as ColorRect
@@ -322,6 +328,8 @@ func _peek_begin() -> void:
 			_peek_lod = float(lod) if lod != null else PEEK_BLUR_LOD
 			_peek_darken_alpha = _peek_darken.color.a
 			_peek_captured = true
+			ModLoaderLog.info("peek: bound veil, baseline lod=%.2f darken.a=%.2f" % [
+				_peek_lod, _peek_darken_alpha], LOG_NAME)
 		_peek_active = true
 	_peek_tween_veil(0.0, 0.0, PEEK_FADE_IN)
 
