@@ -12,9 +12,9 @@ extends "res://scn/ui/options_menu.gd"
 ## translations, and tr() passes unknown strings through unchanged, so a key
 ## would just render as "label_map_size" in every locale.
 
-const LOG_NAME := "blur6-map_options:OptionsMenu"
+const LOG_NAME := "blur6-diablo_minimap:OptionsMenu"
 
-const MapSettings := preload("res://mods-unpacked/blur6-map_options/scenes/map_settings.gd")
+const MapSettings := preload("res://mods-unpacked/blur6-diablo_minimap/scenes/map_settings.gd")
 const BUTTON_SFX := preload("res://scn/ui/button_sfx.tscn")
 const MENU_TOOLTIP := preload("res://scn/ui/menu_tooltip.tscn")
 
@@ -22,6 +22,13 @@ const MAP_SIZE_MIN := 0.5
 const MAP_SIZE_MAX := 2.5
 const MAP_OPACITY_MIN := 0.1
 const MAP_OPACITY_MAX := 1.0
+
+## Size is held back from the MVP: it works, but it interacts with the vanilla
+## UI's native-pixel scaling in ways that are still being characterised on high
+## DPI displays. The row is built and wired either way, just not added to the
+## tab, so the whole feature returns by flipping this - and the saved
+## map_size_scale keeps being honoured by the controller meanwhile.
+const SHOW_SIZE_SLIDER := false
 
 ## Peek: while a map control is being used from the *pause* menu, the pause
 ## veil (CanvasLayer/Blur's lod + CanvasLayer/Darken's own colour) is faded out
@@ -159,12 +166,19 @@ func _build_map_options() -> void:
 	# the bottom of the tab.
 	var after := %PlayerMinimapVisible.get_index() if %PlayerMinimapVisible.get_parent() == tab \
 		else tab.get_child_count() - 1
-	for row: Control in [size_row, opacity_row, diablo_map_button, reset_map_button]:
+	var rows: Array[Control] = [opacity_row, diablo_map_button, reset_map_button]
+	if SHOW_SIZE_SLIDER:
+		rows.push_front(size_row)
+	else:
+		# Never parented, so free it rather than leaking an orphan node.
+		size_row.queue_free()
+	for row: Control in rows:
 		tab.add_child(row)
 		after += 1
 		tab.move_child(row, after)
 
-	_add_hover_highlight([map_size_slider, map_opacity_slider])
+	# Only the rows that are actually in the tree; the size row may have been freed.
+	_add_hover_highlight([map_size_slider, map_opacity_slider] if SHOW_SIZE_SLIDER else [map_opacity_slider])
 
 
 ## A 500px base map cannot exceed 90% of the shorter viewport axis, which is

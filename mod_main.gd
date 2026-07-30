@@ -1,8 +1,8 @@
 extends Node
 
 
-const MOD_DIR := "blur6-map_options"
-const LOG_NAME := "blur6-map_options:Main"
+const MOD_DIR := "blur6-diablo_minimap"
+const LOG_NAME := "blur6-diablo_minimap:Main"
 
 var mod_dir_path := ""
 var extensions_dir_path := ""

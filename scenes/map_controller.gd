@@ -18,7 +18,7 @@ extends Node
 ##
 ## Docked (x = vw - S.x, y = 0) reproduces the vanilla .tscn anchors exactly.
 
-const LOG_NAME := "blur6-map_options:MapController"
+const LOG_NAME := "blur6-diablo_minimap:MapController"
 const MapSettings := preload("map_settings.gd")
 ## Mirrors Minimap.anim_len.
 const ANIM_LEN := 0.5
