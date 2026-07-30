@@ -32,6 +32,16 @@ const IN_ROOM_ZOOM := Vector2.ONE * 0.03
 const ZOOM_LERP := 0.05
 ## The viewport height the vanilla 500px map was designed against.
 const DESIGN_HEIGHT := 1080.0
+## How much of vanilla's aim lead the Diablo overlay keeps. Vanilla parks the map
+## camera on the game camera, which sits 20% of the way toward the mouse, so the
+## map slides around as you aim. Diablo keeps the player pinned at the centre and
+## moves the world under them; 0.0 is that, 1.0 is vanilla.
+const DIABLO_LEAD := 0.0
+## Per-physics-frame weight easing the map camera toward its target. Pathogenic's
+## dashes are far faster than anything Diablo does, so this is deliberately loose:
+## snapping to the player makes the whole map jerk on every dash, while easing
+## lets it settle. Higher is tighter.
+const FOLLOW_LERP := 0.18
 
 var minimap: Control
 var minimap_id: int = 0
@@ -56,6 +66,11 @@ var was_expanded := false
 ## While > 0 the vanilla shrink tween owns %Camera2D.zoom; we only track it.
 var zoom_lock := 0.0
 var zoom_state := Vector2(0.01, 0.01)
+## Eased map-camera position, so a dash does not snap the whole map.
+var follow_pos := Vector2.ZERO
+## False until the first frame of a follow, so it snaps instead of sliding in
+## from wherever the camera happened to be.
+var follow_valid := false
 var anchor_tween: Tween
 
 
@@ -142,7 +157,10 @@ func _physics_process(delta: float) -> void:
 ## component magnifies the rect and the offset together, so it stays proportional
 ## and must pass through. Only the slider's magnification needs cancelling.
 func _recentre(camera: Camera2D) -> void:
-	if user_scale <= 0.0 or is_equal_approx(user_scale, 1.0):
+	var lead := DIABLO_LEAD if MapSettings.diablo else 1.0
+	# Nothing to correct: vanilla framing at vanilla scale.
+	if is_equal_approx(lead, 1.0) and (user_scale <= 0.0 or is_equal_approx(user_scale, 1.0)):
+		follow_valid = false
 		return
 	if not is_instance_valid(G.player) or not is_instance_valid(G.player.map_icon):
 		return
@@ -154,7 +172,17 @@ func _recentre(camera: Camera2D) -> void:
 	# compound every frame and slide the map onto the player.
 	var player_pos: Vector2 = G.player.map_icon.global_position
 	var base_pos: Vector2 = G.main.camera.global_position
-	camera.global_position = player_pos + (base_pos - player_pos) / user_scale
+	var target: Vector2 = player_pos + (base_pos - player_pos) * lead / maxf(user_scale, 0.01)
+
+	# Snap on the first frame and while paused. Paused, the target is static, so
+	# easing toward it would just drift the map for a second behind the options
+	# menu; snapping also keeps the size preview honest the instant it is changed.
+	if not follow_valid or get_tree().paused:
+		follow_pos = target
+		follow_valid = true
+	else:
+		follow_pos = follow_pos.lerp(target, FOLLOW_LERP)
+	camera.global_position = follow_pos
 
 
 ## Picks up a freshly spawned Minimap (a new one is created per level load).
@@ -189,6 +217,7 @@ func _bind() -> bool:
 	zoom_state = base_zoom
 	was_expanded = current.expanded
 	zoom_lock = 0.0
+	follow_valid = false
 	# Viewport included because it is the input that decides how large the map can
 	# get, and it is not what you would guess from the screen resolution: with
 	# canvas_items stretch it stays at the 1920x1080 base on any display, so a
