@@ -18,7 +18,7 @@ extends Node
 ##
 ## Docked (x = vw - S.x, y = 0) reproduces the vanilla .tscn anchors exactly.
 
-const LOG_NAME := "blur6-map_options:MapController"
+const LOG_NAME := "blur6-diablo_minimap:MapController"
 const MapSettings := preload("map_settings.gd")
 ## Mirrors Minimap.anim_len.
 const ANIM_LEN := 0.5
@@ -30,6 +30,18 @@ const MAX_VIEWPORT_FRACTION := 0.9
 const IN_ROOM_ZOOM := Vector2.ONE * 0.03
 ## Vanilla's per-frame zoom lerp weight.
 const ZOOM_LERP := 0.05
+## The viewport height the vanilla 500px map was designed against.
+const DESIGN_HEIGHT := 1080.0
+## How much of vanilla's aim lead the Diablo overlay keeps. Vanilla parks the map
+## camera on the game camera, which sits 20% of the way toward the mouse, so the
+## map slides around as you aim. Diablo keeps the player pinned at the centre and
+## moves the world under them; 0.0 is that, 1.0 is vanilla.
+const DIABLO_LEAD := 0.0
+## Per-physics-frame weight easing the map camera toward its target. Pathogenic's
+## dashes are far faster than anything Diablo does, so this is deliberately loose:
+## snapping to the player makes the whole map jerk on every dash, while easing
+## lets it settle. Higher is tighter.
+const FOLLOW_LERP := 0.18
 
 var minimap: Control
 var minimap_id: int = 0
@@ -37,7 +49,14 @@ var minimap_id: int = 0
 var base_size := Vector2(500, 500)
 var base_zoom := Vector2(0.01, 0.01)
 
-## Scale actually used after the viewport clamp.
+## Correction for the case where the UI is drawn at native pixel size instead of
+## being scaled to the design resolution - see _resolution_scale(). 1.0 whenever
+## content scaling is doing its job, which includes a normal shipped build, so
+## this is inert unless it is actually needed.
+var res_scale := 1.0
+## Post-clamp slider scale, i.e. the user-facing part of the magnification.
+var user_scale := 1.0
+## Total rect/zoom factor against base_size: user_scale * res_scale.
 var effective_scale := 1.0
 ## Anchor pair (horizontal, vertical) for the resting rect in the current mode.
 var rest_anchor := Vector2(1.0, 0.0)
@@ -46,6 +65,11 @@ var was_expanded := false
 ## While > 0 the vanilla shrink tween owns %Camera2D.zoom; we only track it.
 var zoom_lock := 0.0
 var zoom_state := Vector2(0.01, 0.01)
+## Eased map-camera position, so a dash does not snap the whole map.
+var follow_pos := Vector2.ZERO
+## False until the first frame of a follow, so it snaps instead of sliding in
+## from wherever the camera happened to be.
+var follow_valid := false
 var anchor_tween: Tween
 
 
@@ -53,6 +77,12 @@ func _ready() -> void:
 	# Runs after the minimap's own _physics_process, so our zoom write is the
 	# last one of the frame and vanilla's lerp never fights it.
 	process_physics_priority = 100
+	# The size slider lives in the pause menu, and apply() only resizes the rect
+	# — the matching zoom is driven from _physics_process. Without this the tree
+	# is paused while the slider moves, the zoom never follows, and the preview
+	# shows a bigger window onto the world instead of a bigger map. The minimap's
+	# own _physics_process stays paused, so there is still nothing to fight.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	MapSettings.ensure_loaded()
 	SignalBus.map_display_changed.connect(apply)
 	get_tree().root.size_changed.connect(apply)
@@ -107,6 +137,51 @@ func _physics_process(delta: float) -> void:
 	var target: Vector2 = (IN_ROOM_ZOOM if G.current_room else base_zoom) * effective_scale
 	zoom_state = zoom_state.lerp(target, ZOOM_LERP)
 	camera.zoom = zoom_state
+	_recentre(camera)
+
+
+## Vanilla parks the map camera on the *game* camera, which leads the player by
+## an aim-dependent world-space offset. On screen that offset is
+## (player - camera) * zoom, so magnifying the zoom by k magnifies the offset by
+## k as well: the player marker walks sideways across the map as the size slider
+## moves, and at the top of the range it leaves the map altogether. Since the
+## rect and the zoom scale together the framing is otherwise self-similar, which
+## is what made that drift the only visible effect of the slider.
+##
+## Dividing the offset back out keeps the marker exactly where it sits at 1x, at
+## every size, without disturbing vanilla's camera-lead behaviour itself.
+## Runs after minimap.gd's own _physics_process (process_physics_priority), so
+## this is the last write of the frame.
+## Divides by user_scale rather than effective_scale on purpose: the resolution
+## component magnifies the rect and the offset together, so it stays proportional
+## and must pass through. Only the slider's magnification needs cancelling.
+func _recentre(camera: Camera2D) -> void:
+	var lead := DIABLO_LEAD if MapSettings.diablo else 1.0
+	# Nothing to correct: vanilla framing at vanilla scale.
+	if is_equal_approx(lead, 1.0) and (user_scale <= 0.0 or is_equal_approx(user_scale, 1.0)):
+		follow_valid = false
+		return
+	if not is_instance_valid(G.player) or not is_instance_valid(G.player.map_icon):
+		return
+	if not is_instance_valid(G.main) or not is_instance_valid(G.main.camera):
+		return
+	# Derived from the game camera rather than the map camera's current value:
+	# while the tree is paused this still runs (PROCESS_MODE_ALWAYS) but vanilla's
+	# _physics_process does not, so reading our own previous output back would
+	# compound every frame and slide the map onto the player.
+	var player_pos: Vector2 = G.player.map_icon.global_position
+	var base_pos: Vector2 = G.main.camera.global_position
+	var target: Vector2 = player_pos + (base_pos - player_pos) * lead / maxf(user_scale, 0.01)
+
+	# Snap on the first frame and while paused. Paused, the target is static, so
+	# easing toward it would just drift the map for a second behind the options
+	# menu; snapping also keeps the size preview honest the instant it is changed.
+	if not follow_valid or get_tree().paused:
+		follow_pos = target
+		follow_valid = true
+	else:
+		follow_pos = follow_pos.lerp(target, FOLLOW_LERP)
+	camera.global_position = follow_pos
 
 
 ## Picks up a freshly spawned Minimap (a new one is created per level load).
@@ -121,6 +196,19 @@ func _bind() -> bool:
 
 	minimap = current
 	minimap_id = current.get_instance_id()
+	# The scene's root is a TextureRect carrying the 400x400 square_mask, and
+	# TextureRect's default EXPAND_KEEP_SIZE turns the texture's size into a hard
+	# minimum that custom_minimum_size cannot go under. Every map below 400px was
+	# therefore clamped to 400: docked, the size simply stopped responding below
+	# 0.8x; centred, the anchor kept tracking the requested size while the width
+	# stayed pinned, so the panel slid sideways instead of shrinking. The mask is
+	# drawn with STRETCH_SCALE regardless, so dropping the texture out of the
+	# minimum-size calculation changes nothing about how it renders.
+	var texture_rect := current as TextureRect
+	if texture_rect:
+		texture_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	else:
+		ModLoaderLog.warning("Minimap root is not a TextureRect - sizes below 400px may clamp", LOG_NAME)
 	base_size = current.default_size
 	if base_size.x <= 0.0 or base_size.y <= 0.0:
 		base_size = Vector2(500, 500)
@@ -128,7 +216,15 @@ func _bind() -> bool:
 	zoom_state = base_zoom
 	was_expanded = current.expanded
 	zoom_lock = 0.0
-	ModLoaderLog.info("Bound minimap (base size %s, base zoom %s)" % [base_size, base_zoom], LOG_NAME)
+	follow_valid = false
+	# Viewport and window are both logged because their relationship is what
+	# decides whether the map needs a resolution correction: equal means content
+	# scaling is not applying and every Control, vanilla ones included, is drawn
+	# at native pixel size. Different means scaling is working and the map is
+	# already proportional. Neither is guessable from the screen resolution.
+	ModLoaderLog.info("Bound minimap (base size %s, base zoom %s, viewport %s, window %s)" % [
+		base_size, base_zoom, current.get_viewport_rect().size,
+		DisplayServer.window_get_size()], LOG_NAME)
 	apply()
 	return minimap.is_inside_tree()
 
@@ -141,15 +237,24 @@ func apply() -> void:
 	if vp.x <= 0.0 or vp.y <= 0.0:
 		return
 
+	res_scale = _resolution_scale(vp)
 	var k := maxf(MapSettings.size_scale, 0.05)
-	var s := base_size * k
+	var s := base_size * k * res_scale
 	# Clamp uniformly so the map never swallows the screen.
 	var limit := minf(vp.x, vp.y) * MAX_VIEWPORT_FRACTION
+	# Publish the largest scale this display can actually show, so the slider can
+	# end there instead of spending its top travel pinned against the clamp. Both
+	# sides of this scale with the viewport now, so the reachable maximum comes out
+	# the same on every display rather than depending on the monitor.
+	var base_longest := maxf(base_size.x, base_size.y) * res_scale
+	if base_longest > 0.0:
+		MapSettings.max_size_scale = limit / base_longest
 	var longest := maxf(s.x, s.y)
 	if longest > limit:
 		k *= limit / longest
-		s = base_size * k
-	effective_scale = k
+		s = base_size * k * res_scale
+	user_scale = k
+	effective_scale = k * res_scale
 
 	var pos := Vector2(vp.x - s.x, 0.0)
 	if MapSettings.diablo:
@@ -163,8 +268,8 @@ func apply() -> void:
 	# The vars shrink() converges to, so the M-key map always returns here.
 	minimap.default_size = s
 	minimap.default_alpha = alpha
-	# The scene pins custom_minimum_size to 500x500, which would otherwise stop
-	# the rect from ever going below the vanilla size.
+	# Keeps the control's minimum size in step with the requested rect. The
+	# texture-derived floor that used to override this is disabled in _bind().
 	minimap.custom_minimum_size = s
 
 	if minimap.expanded:
@@ -186,6 +291,32 @@ func apply() -> void:
 	var sub_viewport := _sub_viewport()
 	if sub_viewport:
 		sub_viewport.size = Vector2i(roundi(s.x), roundi(s.y))
+
+
+## How much to enlarge the map so it holds its share of the screen.
+##
+## Only corrects the case where the UI is genuinely rendering at native pixel
+## size - i.e. content scaling is not applying, every Control including the
+## vanilla HUD is drawn small, and a 500px map covers a quarter of the screen
+## area it was designed for.
+##
+## Distinguishing that from a merely tall window matters, because with
+## aspect="expand" a 4:3 or 16:10 window legitimately reports a viewport taller
+## than 1080 while scaling works perfectly - keying off height alone would
+## enlarge the map by a third for no reason. The tell is that when scaling is
+## applying, the logical viewport and the window's pixel size differ; when it is
+## not, they are the same rectangle.
+##
+## In a shipped build the engine normally handles this and the result is 1.0, so
+## this whole path is inert there.
+func _resolution_scale(vp: Vector2) -> float:
+	var window_px := Vector2(DisplayServer.window_get_size())
+	if window_px.x <= 0.0 or window_px.y <= 0.0:
+		return 1.0
+	if not vp.is_equal_approx(window_px):
+		# Content scaling is doing its job; the map is already proportional.
+		return 1.0
+	return maxf(vp.y / DESIGN_HEIGHT, 0.01)
 
 
 func _tween_anchors(to: Vector2) -> void:

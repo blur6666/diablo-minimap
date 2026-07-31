@@ -1,6 +1,6 @@
 {
 	"dependencies": [],
-	"description": "Adds map size, map opacity and a Diablo-style centered overlay map to the UI options",
+	"description": "Diablo-style minimap for Pathogenic: a centered translucent overlay map, with opacity control in the UI options",
 	"extra": {
 		"godot": {
 			"authors": [
@@ -10,9 +10,7 @@
 			"compatible_mod_loader_version": [
 				"7.0.0"
 			],
-			"config_schema": {
-
-			},
+			"config_schema": {},
 			"description_rich": "",
 			"image": null,
 			"incompatibilities": [],
@@ -23,8 +21,8 @@
 			]
 		}
 	},
-	"name": "map_options",
+	"name": "diablo_minimap",
 	"namespace": "blur6",
-	"version_number": "1.0.0",
+	"version_number": "0.1.0",
 	"website_url": ""
 }

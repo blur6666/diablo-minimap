@@ -1,17 +1,23 @@
 extends Node
 
 
-const MOD_DIR := "blur6-map_options"
-const LOG_NAME := "blur6-map_options:Main"
+const MOD_DIR := "blur6-diablo_minimap"
+const LOG_NAME := "blur6-diablo_minimap:Main"
+const MapStrings := preload("scenes/map_strings.gd")
 
 var mod_dir_path := ""
 var extensions_dir_path := ""
 
 var map_controller: Node = null
+var map_outline: Node = null
 
 
 func _init() -> void:
 	ModLoaderLog.info("Init", LOG_NAME)
+	# Before anything can build a menu. Registering from a Dictionary means no
+	# CSV or .translation import step, and Control auto-translation re-resolves
+	# the keys live when the player changes language.
+	MapStrings.register()
 	mod_dir_path = ModLoaderMod.get_unpacked_dir().path_join(MOD_DIR)
 	install_script_extensions()
 
@@ -51,3 +57,9 @@ func _add_map_controller() -> void:
 	map_controller.name = "MapController"
 	add_child(map_controller)
 	ModLoaderLog.info("Map controller added", LOG_NAME)
+
+	var MapOutlineScript = load(mod_dir_path.path_join("scenes/map_outline.gd"))
+	map_outline = MapOutlineScript.new()
+	map_outline.name = "MapOutline"
+	add_child(map_outline)
+	ModLoaderLog.info("Map outline added", LOG_NAME)

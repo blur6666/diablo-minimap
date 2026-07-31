@@ -8,13 +8,15 @@ extends "res://scn/ui/options_menu.gd"
 ## so they look and sound native. Node references are kept on the instance:
 ## nodes added at runtime are not registered as scene-unique, so % won't find them.
 ##
-## Labels are literal English rather than translation keys: the mod ships no
-## translations, and tr() passes unknown strings through unchanged, so a key
-## would just render as "label_map_size" in every locale.
+## Labels are translation keys, registered at runtime from map_strings.gd in all
+## 13 languages the game ships. Control auto-translation resolves them on Labels
+## and Buttons, and menu_tooltip.gd runs its text through tr(), so the tooltips
+## take keys as well - all of it re-resolving live when the language changes.
 
-const LOG_NAME := "blur6-map_options:OptionsMenu"
+const LOG_NAME := "blur6-diablo_minimap:OptionsMenu"
 
-const MapSettings := preload("res://mods-unpacked/blur6-map_options/scenes/map_settings.gd")
+const MapSettings := preload("res://mods-unpacked/blur6-diablo_minimap/scenes/map_settings.gd")
+const MapStrings := preload("res://mods-unpacked/blur6-diablo_minimap/scenes/map_strings.gd")
 const BUTTON_SFX := preload("res://scn/ui/button_sfx.tscn")
 const MENU_TOOLTIP := preload("res://scn/ui/menu_tooltip.tscn")
 
@@ -23,24 +25,84 @@ const MAP_SIZE_MAX := 2.5
 const MAP_OPACITY_MIN := 0.1
 const MAP_OPACITY_MAX := 1.0
 
+## Size is held back from the MVP: it works, but it interacts with the vanilla
+## UI's native-pixel scaling in ways that are still being characterised on high
+## DPI displays. The row is built and wired either way, just not added to the
+## tab, so the whole feature returns by flipping this - and the saved
+## map_size_scale keeps being honoured by the controller meanwhile.
+const SHOW_SIZE_SLIDER := false
+
+## Peek: while a map control is being used from the *pause* menu, the pause
+## veil (CanvasLayer/Blur's lod + CanvasLayer/Darken's own colour) is faded out
+## so the map behind it is sharp and undimmed and the change can actually be
+## judged. Darken's `color` is faded rather than its `modulate`, because the
+## black backdrop panel behind the menu text is a child of Darken and inherits
+## modulate — fading colour leaves that panel, and the menu's readability,
+## alone.
+const PEEK_FADE_IN := 0.12
+const PEEK_FADE_OUT := 0.25
+## Keyboard/gamepad slider nudges emit value_changed with no drag_started /
+## drag_ended pair, so those hold the peek open for a moment instead. Kept
+## short: it only has to bridge the gap between successive key repeats.
+const PEEK_HOLD := 0.5
+## pause_menu.tscn's "enter" animation ends here; only used if the live instance
+## shader parameter cannot be read back.
+const PEEK_BLUR_LOD := 4.5
+
 var map_size_slider: HSlider
 var map_opacity_slider: HSlider
 var diablo_map_button: CheckButton
+var outline_button: CheckButton
+var reset_map_button: Button
+
+var _peek_blur: ColorRect
+var _peek_darken: ColorRect
+var _peek_lod := PEEK_BLUR_LOD
+var _peek_darken_alpha := 1.0
+var _peek_captured := false
+var _peek_bind_logged := false
+var _peek_active := false
+var _peek_tween: Tween
+var _peek_dragging := false
+## Bumped whenever the peek state changes, so a pending hold timer that has been
+## superseded knows to do nothing.
+var _peek_hold_id := 0
 
 
 func _ready() -> void:
 	super._ready()
 	_build_map_options()
+	# The Fullscreen and Resolution controls live in this same menu, so the
+	# viewport - and with it the largest map that fits - can change while the
+	# size slider is on screen, after show_options() has already synced it.
+	get_tree().root.size_changed.connect(_on_viewport_resized)
+
+
+## The map controller recomputes the reachable maximum from this same signal;
+## deferring means this runs after it regardless of connection order.
+func _on_viewport_resized() -> void:
+	_sync_size_slider_range.call_deferred()
 
 
 func show_options():
 	super.show_options()
 	if is_instance_valid(map_size_slider):
+		_sync_size_slider_range()
 		map_size_slider.set_value_no_signal(MapSettings.size_scale)
 	if is_instance_valid(map_opacity_slider):
 		map_opacity_slider.set_value_no_signal(MapSettings.opacity)
 	if is_instance_valid(diablo_map_button):
 		diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
+	if is_instance_valid(outline_button):
+		outline_button.set_pressed_no_signal(MapSettings.outline)
+
+
+func hide_options():
+	super.hide_options()
+	# Leaving the tab mid-peek (Back, or the pause menu closing) must not strand
+	# the veil faded out.
+	_peek_dragging = false
+	_peek_end()
 
 
 func _build_map_options() -> void:
@@ -54,31 +116,88 @@ func _build_map_options() -> void:
 	MapSettings.ensure_loaded()
 
 	var size_row := _make_slider_row(
-		"MapSizeMargin", "Map Size", "MapSizeSlider",
+		"MapSizeMargin", MapStrings.KEY_MAP_SIZE, "MapSizeSlider",
 		MAP_SIZE_MIN, MAP_SIZE_MAX, 0.05, MapSettings.size_scale
 	)
 	map_size_slider = size_row.get_node("HBoxContainer/MapSizeSlider")
+	_sync_size_slider_range()
 	map_size_slider.value_changed.connect(_on_map_size_slider_value_changed)
+	map_size_slider.drag_started.connect(_on_map_slider_drag_started)
 	map_size_slider.drag_ended.connect(_on_map_size_slider_drag_ended)
 
 	var opacity_row := _make_slider_row(
-		"MapOpacityMargin", "Map Opacity", "MapOpacitySlider",
+		"MapOpacityMargin", MapStrings.KEY_MAP_OPACITY, "MapOpacitySlider",
 		MAP_OPACITY_MIN, MAP_OPACITY_MAX, 0.01, MapSettings.opacity
 	)
 	map_opacity_slider = opacity_row.get_node("HBoxContainer/MapOpacitySlider")
 	map_opacity_slider.value_changed.connect(_on_map_opacity_slider_value_changed)
+	map_opacity_slider.drag_started.connect(_on_map_slider_drag_started)
 	map_opacity_slider.drag_ended.connect(_on_map_opacity_slider_drag_ended)
 
-	diablo_map_button = CheckButton.new()
-	diablo_map_button.name = "DiabloMap"
-	diablo_map_button.text = "Diablo Style Map"
-	diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
-	diablo_map_button.toggled.connect(_on_diablo_map_toggled)
+	diablo_map_button = _make_check_row(
+		"DiabloMap", MapStrings.KEY_DIABLO, MapSettings.diablo,
+		_on_diablo_map_toggled, MapStrings.KEY_DIABLO_TIP
+	)
+	outline_button = _make_check_row(
+		"MapOutline", MapStrings.KEY_OUTLINE, MapSettings.outline,
+		_on_outline_toggled, MapStrings.KEY_OUTLINE_TIP
+	)
+
+	# Restores all three map settings at once. The size slider in particular
+	# persists across sessions, so a run can start pinned against the viewport
+	# clamp with no way to tell that from a broken slider - this gives a known
+	# baseline to compare against.
+	reset_map_button = Button.new()
+	reset_map_button.name = "ResetMapOptions"
+	reset_map_button.text = MapStrings.KEY_RESET
+	reset_map_button.pressed.connect(_on_reset_map_options_pressed)
+	reset_map_button.add_child(BUTTON_SFX.instantiate())
+
+	# Group them with the existing minimap toggle rather than dumping them at
+	# the bottom of the tab.
+	var after := %PlayerMinimapVisible.get_index() if %PlayerMinimapVisible.get_parent() == tab \
+		else tab.get_child_count() - 1
+	var rows: Array[Control] = [opacity_row, diablo_map_button, outline_button, reset_map_button]
+	if SHOW_SIZE_SLIDER:
+		rows.push_front(size_row)
+	else:
+		# Never parented, so free it rather than leaking an orphan node.
+		size_row.queue_free()
+	for row: Control in rows:
+		tab.add_child(row)
+		after += 1
+		tab.move_child(row, after)
+
+	# Only the rows that are actually in the tree; the size row may have been freed.
+	_add_hover_highlight([map_size_slider, map_opacity_slider] if SHOW_SIZE_SLIDER else [map_opacity_slider])
+
+
+## A 500px base map cannot exceed 90% of the shorter viewport axis, which is
+## 972px (1.94x) on 1920x1080 — so on that display every slider position above
+## 1.94 produced an identical map and the top of the travel felt broken. The
+## reachable maximum is a property of the screen, so it is applied here instead
+## of being baked into MAP_SIZE_MAX, and re-checked on each show_options() in
+## case the resolution changed. Must run before set_value_no_signal, or Range
+## clamps the incoming value against the previous maximum.
+func _sync_size_slider_range() -> void:
+	if not is_instance_valid(map_size_slider):
+		return
+	map_size_slider.max_value = clampf(MapSettings.max_size_scale, MAP_SIZE_MIN + 0.05, MAP_SIZE_MAX)
+
+
+## Both toggles are built identically, so the vanilla tooltip layout lives here
+## once. set_anchor(..., false) rather than the property setters: the setters
+## rewrite the offsets to keep the node where it currently sits, which undoes
+## the preset.
+func _make_check_row(row_name: String, label: String, pressed: bool,
+		on_toggled: Callable, tooltip_text: String) -> CheckButton:
+	var button := CheckButton.new()
+	button.name = row_name
+	button.text = label
+	button.set_pressed_no_signal(pressed)
+	button.toggled.connect(on_toggled)
 	var tooltip := MENU_TOOLTIP.instantiate()
-	tooltip.text = "Moves the map to the centre of the screen as a translucent overlay, Diablo-style. Size and opacity still apply."
-	# Vanilla's tooltip layout: anchors preset 6 (centre-right), all offsets 0.
-	# set_anchor(..., false) instead of the property setters, which would rewrite
-	# the offsets to keep the node where it currently is.
+	tooltip.text = tooltip_text
 	tooltip.set_anchor(SIDE_LEFT, 1.0, false)
 	tooltip.set_anchor(SIDE_RIGHT, 1.0, false)
 	tooltip.set_anchor(SIDE_TOP, 0.5, false)
@@ -89,19 +208,9 @@ func _build_map_options() -> void:
 	tooltip.offset_bottom = 0.0
 	tooltip.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	tooltip.grow_vertical = Control.GROW_DIRECTION_BOTH
-	diablo_map_button.add_child(tooltip)
-	diablo_map_button.add_child(BUTTON_SFX.instantiate())
-
-	# Group them with the existing minimap toggle rather than dumping them at
-	# the bottom of the tab.
-	var after := %PlayerMinimapVisible.get_index() if %PlayerMinimapVisible.get_parent() == tab \
-		else tab.get_child_count() - 1
-	for row: Control in [size_row, opacity_row, diablo_map_button]:
-		tab.add_child(row)
-		after += 1
-		tab.move_child(row, after)
-
-	_add_hover_highlight([map_size_slider, map_opacity_slider])
+	button.add_child(tooltip)
+	button.add_child(BUTTON_SFX.instantiate())
+	return button
 
 
 func _make_slider_row(row_name: String, label_key: String, slider_name: String,
@@ -161,21 +270,165 @@ func _add_hover_highlight(sliders: Array) -> void:
 # drag_ended re-saves once at the end of the drag.
 func _on_map_size_slider_value_changed(value: float) -> void:
 	MapSettings.set_size_scale(value)
+	_peek_on_value_changed()
 
 
 func _on_map_size_slider_drag_ended(value_changed: bool) -> void:
 	if value_changed:
 		MapSettings.resave_size_scale()
+	_on_map_slider_drag_ended()
 
 
 func _on_map_opacity_slider_value_changed(value: float) -> void:
 	MapSettings.set_opacity(value)
+	_peek_on_value_changed()
 
 
 func _on_map_opacity_slider_drag_ended(value_changed: bool) -> void:
 	if value_changed:
 		MapSettings.resave_opacity()
+	_on_map_slider_drag_ended()
+
+
+## Writes the defaults through MapSettings (which persists and emits), then pulls
+## the controls back into line. _sync_size_slider_range() runs first: the stored
+## scale can sit above the reachable maximum, and Range would clamp the incoming
+## value against a stale max_value.
+func _on_reset_map_options_pressed() -> void:
+	MapSettings.reset_to_defaults()
+	_sync_size_slider_range()
+	if is_instance_valid(map_size_slider):
+		map_size_slider.set_value_no_signal(MapSettings.size_scale)
+	if is_instance_valid(map_opacity_slider):
+		map_opacity_slider.set_value_no_signal(MapSettings.opacity)
+	if is_instance_valid(diablo_map_button):
+		diablo_map_button.set_pressed_no_signal(MapSettings.diablo)
+	if is_instance_valid(outline_button):
+		outline_button.set_pressed_no_signal(MapSettings.outline)
+	# Same peek as any other map change, so the result is visible immediately.
+	_peek_on_value_changed()
+
+
+func _on_outline_toggled(toggled_on: bool) -> void:
+	MapSettings.set_outline(toggled_on)
+	_peek_on_value_changed()
 
 
 func _on_diablo_map_toggled(toggled_on: bool) -> void:
 	MapSettings.set_diablo(toggled_on)
+	# Same reason as the sliders: the toggle relocates and re-tints the map, and
+	# there is nothing to see through a blurred veil.
+	_peek_on_value_changed()
+
+
+func _on_map_slider_drag_started() -> void:
+	_peek_dragging = true
+	_peek_begin()
+
+
+func _on_map_slider_drag_ended() -> void:
+	_peek_dragging = false
+	_peek_end()
+
+
+## Keyboard / gamepad changes never emit the drag pair, so they open the peek
+## themselves and let it close on a timer.
+func _peek_on_value_changed() -> void:
+	if _peek_dragging:
+		return
+	_peek_begin()
+	_peek_end(PEEK_HOLD)
+
+
+## The options menu is instanced in the main menu as well, where there is no
+## pause veil (and no map) — this only resolves inside the pause menu instance.
+## Resolved lazily because pause_menu.gd assigns G.pause_menu in its own _ready,
+## which runs after this node's.
+func _peek_bind() -> bool:
+	if is_instance_valid(_peek_blur) and is_instance_valid(_peek_darken):
+		return true
+	var pause_menu: Node = G.pause_menu
+	if not is_instance_valid(pause_menu) or not pause_menu.is_ancestor_of(self):
+		# Expected for the main-menu instance, which has no veil. Logged once so a
+		# missing peek can be told apart from a peek that bound and did nothing.
+		if not _peek_bind_logged:
+			_peek_bind_logged = true
+			ModLoaderLog.info("peek: no pause menu ancestor, nothing to fade here", LOG_NAME)
+		return false
+	_peek_blur = pause_menu.get_node_or_null("CanvasLayer/Blur") as ColorRect
+	_peek_darken = pause_menu.get_node_or_null("CanvasLayer/Darken") as ColorRect
+	if _peek_blur == null or _peek_darken == null:
+		ModLoaderLog.warning("Pause veil nodes not found - map preview peek disabled", LOG_NAME)
+		return false
+	var anim := pause_menu.get_node_or_null("AnimationPlayer") as AnimationPlayer
+	if anim:
+		anim.animation_started.connect(_on_pause_animation_started)
+	return true
+
+
+func _peek_begin() -> void:
+	if not _peek_bind():
+		return
+	_peek_hold_id += 1
+	if not _peek_active:
+		# Capture only when the veil is at rest, so a peek started while the
+		# previous one is still fading back does not record a mid-fade value.
+		if not _peek_captured:
+			var lod: Variant = _peek_blur.get_instance_shader_parameter("lod")
+			_peek_lod = float(lod) if lod != null else PEEK_BLUR_LOD
+			_peek_darken_alpha = _peek_darken.color.a
+			_peek_captured = true
+			ModLoaderLog.info("peek: bound veil, baseline lod=%.2f darken.a=%.2f" % [
+				_peek_lod, _peek_darken_alpha], LOG_NAME)
+		_peek_active = true
+	_peek_tween_veil(0.0, 0.0, PEEK_FADE_IN)
+
+
+func _peek_end(hold := 0.0) -> void:
+	if not _peek_active:
+		return
+	if hold > 0.0:
+		_peek_hold_id += 1
+		var id := _peek_hold_id
+		# process_always so it still ticks with the tree paused, ignore_time_scale
+		# so the resume slow-motion ramp does not stretch it.
+		var timer := get_tree().create_timer(hold, true, false, true)
+		timer.timeout.connect(func() -> void:
+			if id == _peek_hold_id:
+				_peek_end()
+		)
+		return
+	_peek_active = false
+	_peek_tween_veil(_peek_lod, _peek_darken_alpha, PEEK_FADE_OUT)
+
+
+func _peek_tween_veil(lod: float, darken_alpha: float, duration: float) -> void:
+	if not is_instance_valid(_peek_blur) or not is_instance_valid(_peek_darken):
+		return
+	if _peek_tween:
+		_peek_tween.kill()
+	var from: Variant = _peek_blur.get_instance_shader_parameter("lod")
+	# Ignore the pause time scale the same way every other pause-menu tween does.
+	_peek_tween = create_tween().set_parallel().set_ignore_time_scale(true)
+	_peek_tween.tween_method(_set_peek_lod, float(from) if from != null else lod, lod, duration)
+	_peek_tween.tween_property(_peek_darken, "color:a", darken_alpha, duration)
+
+
+func _set_peek_lod(value: float) -> void:
+	if is_instance_valid(_peek_blur):
+		_peek_blur.set_instance_shader_parameter("lod", value)
+
+
+## pause() and resume() drive the blur lod from the pause menu's own
+## AnimationPlayer. Once that is playing it owns the property, so drop the peek
+## rather than fight it — but Darken's `color` is not on any track, so that one
+## still has to be put back by hand.
+func _on_pause_animation_started(_anim_name: StringName) -> void:
+	if _peek_tween:
+		_peek_tween.kill()
+		_peek_tween = null
+	_peek_hold_id += 1
+	_peek_active = false
+	_peek_dragging = false
+	if _peek_captured and is_instance_valid(_peek_darken):
+		_peek_darken.color.a = _peek_darken_alpha
